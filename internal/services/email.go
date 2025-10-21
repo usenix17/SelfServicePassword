@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/gomail.v2"
+	"github.com/wneessen/go-mail"
 )
 
 type EmailService struct {
@@ -95,11 +95,15 @@ func (s *EmailService) VerifyCode(token, code string) (bool, string) {
 }
 
 func (s *EmailService) sendEmail(email, code string) error {
-	m := gomail.NewMessage()
-	m.SetHeader("From", fmt.Sprintf("%s <%s>", s.config.Email.FromName, s.config.Email.FromEmail))
-	m.SetHeader("To", email)
-	m.SetHeader("Subject", "LDAP Self-Service - Email Verification")
-	
+	m := mail.NewMsg()
+	if err := m.From(fmt.Sprintf("%s <%s>", s.config.Email.FromName, s.config.Email.FromEmail)); err != nil {
+		return fmt.Errorf("sendMail: set From: %w", err)
+	}
+	if err := m.To(email); err != nil {
+		return fmt.Errorf("sendMail: set To: %w", err)
+	}
+	m.Subject("LDAP Self-Service - Email Verification")
+
 	body := fmt.Sprintf(`
 		<html>
 		<body>
@@ -110,17 +114,22 @@ func (s *EmailService) sendEmail(email, code string) error {
 		</body>
 		</html>
 	`, code)
-	
-	m.SetBody("text/html", body)
+	m.SetBodyString(mail.TypeTextHTML, body)
 
-	d := gomail.NewDialer(
-		s.config.Email.SMTPHost,
-		s.config.Email.SMTPPort,
-		s.config.Email.SMTPUser,
-		s.config.Email.SMTPPassword,
+	client, err := mail.NewClient(s.config.Email.SMTPHost,
+		mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover),
+		mail.WithPort(s.config.Email.SMTPPort),
+		mail.WithTLSPortPolicy(mail.TLSOpportunistic),
+		mail.WithUsername(s.config.Email.SMTPUser),
+		mail.WithPassword(s.config.Email.SMTPPassword),
 	)
-
-	return d.DialAndSend(m)
+	if err != nil {
+		return fmt.Errorf("sendMail: create mail client: %w", err)
+	}
+	if err := client.DialAndSend(m); err != nil {
+		return fmt.Errorf("sendMail: dial+send: %w", err)
+	}
+	return nil
 }
 
 func (s *EmailService) generateCode() (string, error) {

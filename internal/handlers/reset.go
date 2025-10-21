@@ -45,6 +45,7 @@ func RequestPasswordReset(ldapService *services.LDAPService, emailService *servi
 		}
 
 		if err2 != nil {
+			c.Error(err2)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send verification code"})
 			return
 		}
