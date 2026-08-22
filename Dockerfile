@@ -1,4 +1,9 @@
-FROM golang:1.21-alpine AS builder
+# REGISTRY selects where base images are pulled from. Defaults to public
+# Docker Hub; override to a mirror/proxy-cache prefix, e.g.
+#   --build-arg REGISTRY=registry.starnix.net/docker/library
+ARG REGISTRY=docker.io/library
+
+FROM ${REGISTRY}/golang:1.21-alpine AS builder
 
 WORKDIR /app
 
@@ -11,7 +16,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
-FROM alpine:latest
+FROM ${REGISTRY}/alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
