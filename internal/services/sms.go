@@ -2,12 +2,14 @@ package services
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"ldap-self-service/internal/config"
 	"math/big"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -99,6 +101,8 @@ func (s *SMSService) sendSMS(phone, code string) error {
 	message := fmt.Sprintf("Your LDAP Self-Service verification code is: %s. This code expires in 10 minutes.", code)
 	
 	switch s.config.SMS.Provider {
+	case "voipms":
+		return s.sendVoipmsSMS(phone, message)
 	case "apprise":
 		return s.sendAppriseSMS(phone, message)
 	case "mock":
@@ -107,6 +111,62 @@ func (s *SMSService) sendSMS(phone, code string) error {
 	default:
 		return fmt.Errorf("unsupported SMS provider: %s", s.config.SMS.Provider)
 	}
+}
+
+func (s *SMSService) sendVoipmsSMS(phone, message string) error {
+	// Call the VoIP.ms REST API directly. VoIP.ms responses are slow
+	// (~7-12s); the previous Apprise hop timed out at ~4s and reported a
+	// failure even though the SMS was already accepted and delivered.
+	creds := s.config.SMS.APISecret // Format: "api_password:api_username"
+	parts := strings.SplitN(creds, ":", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid VoIP.ms credentials: expected \"password:username\"")
+	}
+	apiPassword := parts[0]
+	apiUsername := parts[1]
+
+	params := url.Values{}
+	params.Set("api_username", apiUsername)
+	params.Set("api_password", apiPassword)
+	params.Set("method", "sendSMS")
+	params.Set("did", s.config.SMS.FromPhone)
+	params.Set("dst", phone)
+	params.Set("message", message)
+
+	apiURL := "https://voip.ms/api/v1/rest.php?" + params.Encode()
+
+	// Timeout comfortably above VoIP.ms latency so slow-but-successful
+	// sends are not misreported as failures.
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return fmt.Errorf("failed to reach VoIP.ms API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read VoIP.ms API response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("VoIP.ms API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("failed to parse VoIP.ms API response: %s", string(body))
+	}
+
+	if result.Status != "success" {
+		return fmt.Errorf("VoIP.ms SMS failed: %s", result.Status)
+	}
+
+	return nil
 }
 
 func (s *SMSService) sendAppriseSMS(phone, message string) error {
