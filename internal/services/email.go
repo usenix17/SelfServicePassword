@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"ldap-self-service/internal/config"
+	"log"
 	"math/big"
 	"sync"
 	"time"
@@ -30,7 +31,7 @@ func NewEmailService(cfg *config.Config) *EmailService {
 		config: cfg,
 		codes:  make(map[string]*VerificationCode),
 	}
-	
+
 	go service.cleanupExpiredCodes()
 	return service
 }
@@ -56,12 +57,17 @@ func (s *EmailService) SendVerificationCode(email, username string) (string, err
 	}
 	s.mutex.Unlock()
 
-	if err := s.sendEmail(email, code); err != nil {
-		s.mutex.Lock()
-		delete(s.codes, token)
-		s.mutex.Unlock()
-		return "", err
-	}
+	// Send asynchronously so the HTTP response is not held open for the
+	// duration of the SMTP exchange (which can trip CDN/proxy timeouts).
+	// The code is already stored; the mail arrives shortly after.
+	go func() {
+		if err := s.sendEmail(email, code); err != nil {
+			log.Printf("async email send failed for user %q (%s): %v", username, email, err)
+			s.mutex.Lock()
+			delete(s.codes, token)
+			s.mutex.Unlock()
+		}
+	}()
 
 	return token, nil
 }
@@ -134,7 +140,7 @@ func (s *EmailService) sendEmail(email, code string) error {
 func (s *EmailService) generateCode() (string, error) {
 	const charset = "0123456789"
 	code := make([]byte, 6)
-	
+
 	for i := range code {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
@@ -142,14 +148,14 @@ func (s *EmailService) generateCode() (string, error) {
 		}
 		code[i] = charset[num.Int64()]
 	}
-	
+
 	return string(code), nil
 }
 
 func (s *EmailService) generateToken() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	token := make([]byte, 32)
-	
+
 	for i := range token {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
@@ -157,7 +163,7 @@ func (s *EmailService) generateToken() (string, error) {
 		}
 		token[i] = charset[num.Int64()]
 	}
-	
+
 	return string(token), nil
 }
 
@@ -180,23 +186,23 @@ func (s *EmailService) cleanupExpiredCodes() {
 func (s *EmailService) HasToken(token string) bool {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	entry, exists := s.codes[token]
 	if !exists {
 		return false
 	}
-	
+
 	return time.Now().Before(entry.ExpiresAt)
 }
 
 func (s *EmailService) GetUsernameForToken(token string) string {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	entry, exists := s.codes[token]
 	if !exists || time.Now().After(entry.ExpiresAt) {
 		return ""
 	}
-	
+
 	return entry.Username
 }
