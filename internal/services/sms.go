@@ -142,9 +142,11 @@ func (s *SMSService) sendVoipmsSMS(phone, message string) error {
 
 	apiURL := "https://voip.ms/api/v1/rest.php?" + params.Encode()
 
-	// Timeout comfortably above VoIP.ms latency so slow-but-successful
-	// sends are not misreported as failures.
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Timeout well above VoIP.ms latency, which is highly variable and has
+	// been observed from ~7s up to 40s+ during provider degradation. The
+	// send runs in a background goroutine, so a long timeout costs nothing
+	// in user-facing latency and just gives a slow-but-working API room.
+	client := &http.Client{Timeout: 90 * time.Second}
 
 	resp, err := client.Get(apiURL)
 	if err != nil {
