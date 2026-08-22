@@ -103,7 +103,6 @@ func (s *LDAPService) Authenticate(username, password string) (*models.User, err
 		Phone:     entry.GetAttributeValue(s.config.LDAP.PhoneAttr),
 		FirstName: entry.GetAttributeValue("givenName"),
 		LastName:  entry.GetAttributeValue("sn"),
-		LastLogin: time.Now(),
 	}
 
 	sshKeys := entry.GetAttributeValues(s.config.LDAP.SSHKeyAttr)

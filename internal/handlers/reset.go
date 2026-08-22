@@ -32,13 +32,13 @@ func RequestPasswordReset(ldapService *services.LDAPService, emailService *servi
 				c.JSON(http.StatusBadRequest, gin.H{"error": "No email address configured for this user"})
 				return
 			}
-			token, err2 = emailService.SendVerificationCode(user.Email)
+			token, err2 = emailService.SendVerificationCode(user.Email, user.Username)
 		case "sms":
 			if user.Phone == "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "No phone number configured for this user"})
 				return
 			}
-			token, err2 = smsService.SendVerificationCode(user.Phone)
+			token, err2 = smsService.SendVerificationCode(user.Phone, user.Username)
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid reset method. Use 'email' or 'sms'"})
 			return
@@ -65,28 +65,32 @@ func ResetPassword(ldapService *services.LDAPService, emailService *services.Ema
 			return
 		}
 
-		// Try to verify the code with both email and SMS services
-		valid, contact := emailService.VerifyCode(req.Token, req.Code)
+		// Get the username BEFORE verifying the code (since VerifyCode deletes the token)
+		var username string
+		if smsService.HasToken(req.Token) {
+			username = smsService.GetUsernameForToken(req.Token)
+		} else if emailService.HasToken(req.Token) {
+			username = emailService.GetUsernameForToken(req.Token)
+		}
+		
+		if username == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid token or token expired"})
+			return
+		}
+
+		// Now try to verify the code with both email and SMS services
+		valid, _ := emailService.VerifyCode(req.Token, req.Code)
 		if !valid {
-			valid, contact = smsService.VerifyCode(req.Token, req.Code)
+			valid, _ = smsService.VerifyCode(req.Token, req.Code)
 		}
 
 		if !valid {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired verification code"})
 			return
 		}
-
-		// Find user by email or phone
-		var user *models.User
-		var err error
 		
-		// Try to find user by email first, then by phone
-		if contact != "" {
-			// This is a simplified approach - in a real system you'd need a more robust user lookup
-			// For now, we'll require the username to be provided again in the reset flow
-			c.JSON(http.StatusBadRequest, gin.H{"error": "User lookup not implemented. Please provide username"})
-			return
-		}
+		// Get user by username
+		user, err := ldapService.GetUser(username)
 
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})

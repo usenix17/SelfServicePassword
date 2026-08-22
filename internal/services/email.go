@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/gomail.v2"
+	mail "github.com/wneessen/go-mail"
 )
 
 type EmailService struct {
@@ -20,6 +20,7 @@ type EmailService struct {
 type VerificationCode struct {
 	Code      string
 	Email     string
+	Username  string
 	ExpiresAt time.Time
 	Token     string
 }
@@ -34,7 +35,7 @@ func NewEmailService(cfg *config.Config) *EmailService {
 	return service
 }
 
-func (s *EmailService) SendVerificationCode(email string) (string, error) {
+func (s *EmailService) SendVerificationCode(email, username string) (string, error) {
 	code, err := s.generateCode()
 	if err != nil {
 		return "", err
@@ -49,6 +50,7 @@ func (s *EmailService) SendVerificationCode(email string) (string, error) {
 	s.codes[token] = &VerificationCode{
 		Code:      code,
 		Email:     email,
+		Username:  username,
 		ExpiresAt: time.Now().Add(10 * time.Minute),
 		Token:     token,
 	}
@@ -93,11 +95,15 @@ func (s *EmailService) VerifyCode(token, code string) (bool, string) {
 }
 
 func (s *EmailService) sendEmail(email, code string) error {
-	m := gomail.NewMessage()
-	m.SetHeader("From", fmt.Sprintf("%s <%s>", s.config.Email.FromName, s.config.Email.FromEmail))
-	m.SetHeader("To", email)
-	m.SetHeader("Subject", "LDAP Self-Service - Email Verification")
-	
+	m := mail.NewMsg()
+	if err := m.FromFormat(s.config.Email.FromName, s.config.Email.FromEmail); err != nil {
+		return fmt.Errorf("invalid From address: %w", err)
+	}
+	if err := m.To(email); err != nil {
+		return fmt.Errorf("invalid To address: %w", err)
+	}
+	m.Subject("LDAP Self-Service - Email Verification")
+
 	body := fmt.Sprintf(`
 		<html>
 		<body>
@@ -108,17 +114,21 @@ func (s *EmailService) sendEmail(email, code string) error {
 		</body>
 		</html>
 	`, code)
-	
-	m.SetBody("text/html", body)
 
-	d := gomail.NewDialer(
+	m.SetBodyString(mail.TypeTextHTML, body)
+
+	client, err := mail.NewClient(
 		s.config.Email.SMTPHost,
-		s.config.Email.SMTPPort,
-		s.config.Email.SMTPUser,
-		s.config.Email.SMTPPassword,
+		mail.WithPort(s.config.Email.SMTPPort),
+		mail.WithSMTPAuth(mail.SMTPAuthLogin),
+		mail.WithUsername(s.config.Email.SMTPUser),
+		mail.WithPassword(s.config.Email.SMTPPassword),
 	)
+	if err != nil {
+		return fmt.Errorf("failed to create mail client: %w", err)
+	}
 
-	return d.DialAndSend(m)
+	return client.DialAndSend(m)
 }
 
 func (s *EmailService) generateCode() (string, error) {
@@ -165,4 +175,28 @@ func (s *EmailService) cleanupExpiredCodes() {
 		}
 		s.mutex.Unlock()
 	}
+}
+
+func (s *EmailService) HasToken(token string) bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	
+	entry, exists := s.codes[token]
+	if !exists {
+		return false
+	}
+	
+	return time.Now().Before(entry.ExpiresAt)
+}
+
+func (s *EmailService) GetUsernameForToken(token string) string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	
+	entry, exists := s.codes[token]
+	if !exists || time.Now().After(entry.ExpiresAt) {
+		return ""
+	}
+	
+	return entry.Username
 }

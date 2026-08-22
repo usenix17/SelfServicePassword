@@ -10,7 +10,6 @@ type User struct {
 	FirstName   string    `json:"firstName"`
 	LastName    string    `json:"lastName"`
 	SSHKeys     []SSHKey  `json:"sshKeys"`
-	LastLogin   time.Time `json:"lastLogin"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }

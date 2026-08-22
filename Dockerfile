@@ -11,7 +11,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
-FROM alpine:latest
+FROM ${REGISTRY}/alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 

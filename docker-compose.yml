@@ -1,6 +1,11 @@
 services:
   ldap-self-service:
-    build: .
+    build:
+      context: .
+      args:
+        # Override REGISTRY in a local .env to pull base images through a
+        # mirror/proxy-cache, e.g. REGISTRY=registry.starnix.net/docker/library
+        REGISTRY: ${REGISTRY:-docker.io/library}
     ports:
       - "8081:8081"
     environment:
