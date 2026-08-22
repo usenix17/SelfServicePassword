@@ -1,4 +1,6 @@
-FROM golang:1.25-alpine AS builder
+ARG REGISTRY=docker.io/library
+
+FROM ${REGISTRY}/golang:1.25-alpine AS builder
 
 WORKDIR /app
 
