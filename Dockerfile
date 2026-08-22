@@ -1,9 +1,4 @@
-# REGISTRY selects where base images are pulled from. Defaults to public
-# Docker Hub; override to a mirror/proxy-cache prefix, e.g.
-#   --build-arg REGISTRY=registry.starnix.net/docker/library
-ARG REGISTRY=docker.io/library
-
-FROM ${REGISTRY}/golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
