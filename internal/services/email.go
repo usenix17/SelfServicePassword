@@ -20,6 +20,7 @@ type EmailService struct {
 type VerificationCode struct {
 	Code      string
 	Email     string
+	Username  string
 	ExpiresAt time.Time
 	Token     string
 }
@@ -34,7 +35,7 @@ func NewEmailService(cfg *config.Config) *EmailService {
 	return service
 }
 
-func (s *EmailService) SendVerificationCode(email string) (string, error) {
+func (s *EmailService) SendVerificationCode(email, username string) (string, error) {
 	code, err := s.generateCode()
 	if err != nil {
 		return "", err
@@ -49,6 +50,7 @@ func (s *EmailService) SendVerificationCode(email string) (string, error) {
 	s.codes[token] = &VerificationCode{
 		Code:      code,
 		Email:     email,
+		Username:  username,
 		ExpiresAt: time.Now().Add(10 * time.Minute),
 		Token:     token,
 	}
@@ -165,4 +167,28 @@ func (s *EmailService) cleanupExpiredCodes() {
 		}
 		s.mutex.Unlock()
 	}
+}
+
+func (s *EmailService) HasToken(token string) bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	
+	entry, exists := s.codes[token]
+	if !exists {
+		return false
+	}
+	
+	return time.Now().Before(entry.ExpiresAt)
+}
+
+func (s *EmailService) GetUsernameForToken(token string) string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	
+	entry, exists := s.codes[token]
+	if !exists || time.Now().After(entry.ExpiresAt) {
+		return ""
+	}
+	
+	return entry.Username
 }

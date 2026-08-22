@@ -113,6 +113,22 @@ func (s *SMSService) sendSMS(phone, code string) error {
 	}
 }
 
+// normalizeNANPPhone strips non-digit characters and a leading "1" country
+// code, matching what VoIP.ms sendSMS expects: a bare 10-digit NANP number.
+func normalizeNANPPhone(phone string) string {
+	var digits strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	d := digits.String()
+	if len(d) == 11 && d[0] == '1' {
+		d = d[1:]
+	}
+	return d
+}
+
 func (s *SMSService) sendVoipmsSMS(phone, message string) error {
 	// Call the VoIP.ms REST API directly. VoIP.ms responses are slow
 	// (~7-12s); the previous Apprise hop timed out at ~4s and reported a
@@ -125,19 +141,24 @@ func (s *SMSService) sendVoipmsSMS(phone, message string) error {
 	apiPassword := parts[0]
 	apiUsername := parts[1]
 
+	dst := normalizeNANPPhone(phone)
+	if len(dst) != 10 {
+		return fmt.Errorf("invalid destination phone number %q (need a 10-digit NANP number)", phone)
+	}
+
 	params := url.Values{}
 	params.Set("api_username", apiUsername)
 	params.Set("api_password", apiPassword)
 	params.Set("method", "sendSMS")
-	params.Set("did", s.config.SMS.FromPhone)
-	params.Set("dst", phone)
+	params.Set("did", normalizeNANPPhone(s.config.SMS.FromPhone))
+	params.Set("dst", dst)
 	params.Set("message", message)
 
 	apiURL := "https://voip.ms/api/v1/rest.php?" + params.Encode()
 
-	// Timeout comfortably above VoIP.ms latency so slow-but-successful
-	// sends are not misreported as failures.
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Timeout comfortably above VoIP.ms latency (observed 11-13s, and it can
+	// spike higher) so slow-but-successful sends are not misreported.
+	client := &http.Client{Timeout: 60 * time.Second}
 
 	resp, err := client.Get(apiURL)
 	if err != nil {
